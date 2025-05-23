@@ -1,7 +1,7 @@
 FROM python:3.10
 WORKDIR /app
+RUN apt-get update && apt-get install -y chromium-driver build-essential libxml2-dev libxslt1-dev zlib1g-dev
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN apt-get update && apt-get install -y chromium-driver
 COPY . .
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000"]

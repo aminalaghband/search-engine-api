@@ -1,6 +1,6 @@
-fastapi
-uvicorn
-torch
-transformers
+torch>=2.0.0
+transformers>=4.31.0
 sentence-transformers
 scikit-learn
+fastapi
+uvicorn

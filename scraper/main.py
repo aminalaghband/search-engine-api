@@ -11,8 +11,9 @@ def serp(q: str = Query(...)):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(f"https://duckduckgo.com/?q={q}")
-        page.wait_for_selector("a.result__a")
-        links = page.eval_on_selector_all("a.result__a", "els => els.map(e => e.href)")
+        page.wait_for_selector("a.result__a", timeout=60000)  # 60 seconds
+        print(page.content())
+        links = page.eval_on_selector_all('a[data-testid="result-title-a"]', "els => els.map(e => e.href)")
         browser.close()
     return {"urls": links[:10]}
 

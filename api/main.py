@@ -3,8 +3,8 @@ import requests
 
 app = FastAPI()
 
-SCRAPER_URL = "http://scraper:9990"
-EMBEDDER_URL = "http://embedder:9190"
+SCRAPER_URL = "http://scraper:9000"
+EMBEDDER_URL = "http://embedder:9100"
 
 @app.get("/search")
 def search(q: str = Query(..., description="Search query")):

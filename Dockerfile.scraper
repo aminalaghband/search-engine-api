@@ -1,6 +1,8 @@
 FROM python:3.10
 WORKDIR /app
 RUN apt-get update && apt-get install -y chromium-driver build-essential libxml2-dev libxslt1-dev zlib1g-dev
+RUN pip install --upgrade pip
+RUN pip install lxml_html_clean
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .

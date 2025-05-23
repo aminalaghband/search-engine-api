@@ -1,0 +1,36 @@
+version: "3.9"
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: ../Dockerfile.api
+    ports:
+      - "8890:8000"
+    depends_on:
+      - embedder
+      - scraper
+    environment:
+      - SCRAPER_URL=http://scraper:9990
+      - EMBEDDER_URL=http://embedder:9190
+
+  scraper:
+    build:
+      context: ./scraper
+      dockerfile: ../Dockerfile.scraper
+    ports:
+      - "9990:9000"
+
+  embedder:
+    build:
+      context: ./embedder
+      dockerfile: ../Dockerfile.embedder
+    ports:
+      - "9190:9100"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    runtime: nvidia

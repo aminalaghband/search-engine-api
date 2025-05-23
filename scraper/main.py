@@ -10,12 +10,17 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
 
-def safe_close(resource):
-    try:
-        if resource:
-            resource.close()
-    except Exception as e:
-        logger.warning(f"Cleanup warning: {str(e)}")
+def create_browser():
+    return sync_playwright().start().chromium.launch(
+        headless=True,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--single-process"
+        ],
+        timeout=60000
+    )
 
 @app.get("/serp")
 def serp(q: str = Query(..., min_length=2)):
@@ -26,101 +31,49 @@ def serp(q: str = Query(..., min_length=2)):
     
     try:
         playwright = sync_playwright().start()
-        browser = playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--single-process"
-            ],
-            timeout=60000
-        )
-        
-        context = browser.new_context(
-            user_agent=USER_AGENT,
-            viewport={"width": 1920, "height": 1080},
-            java_script_enabled=True
-        )
-        
+        browser = create_browser()
+        context = browser.new_context(user_agent=USER_AGENT)
         page = context.new_page()
+
         logger.info(f"Searching DuckDuckGo for: {q}")
-        
-        # First try with standard wait
+        page.goto(f"https://duckduckgo.com/?q={q}", timeout=90000)
+
+        # Wait for either search results or captcha
         try:
-            page.goto(
-                f"https://duckduckgo.com/?q={q}",
-                wait_until="networkidle",
-                timeout=60000
-            )
+            page.wait_for_selector('article:has(a[data-testid="result-title-a"])', timeout=30000)
         except:
-            # Fallback to basic load
-            page.goto(f"https://duckduckgo.com/?q={q}", timeout=60000)
-            time.sleep(3)  # Allow time for JS execution
+            page.wait_for_selector('#captcha, :text("DDoS")', timeout=5000)
+            raise HTTPException(429, "Search blocked")
 
-        # Multiple fallback selectors
-        selectors = [
-            '[data-testid="result"]',
-            '.result',
-            '.web-result',
-            '#links',
-            '#captcha'
-        ]
-        
-        found = False
-        for selector in selectors:
-            try:
-                page.wait_for_selector(
-                    selector,
-                    state="attached",
-                    timeout=10000
-                )
-                found = True
-                break
-            except:
-                continue
-                
-        if not found:
-            raise Exception("No search results found")
+        # Scroll to trigger lazy loading
+        for _ in range(3):
+            page.mouse.wheel(0, 1000)
+            time.sleep(0.5)
 
-        # Check for blocking
-        if page.query_selector('#captcha, :text("DDoS"), :text("CAPTCHA")'):
-            raise HTTPException(429, "Search blocked by provider")
+        # Extract results using multiple selector strategies
+        links = page.query_selector_all('a[data-testid="result-title-a"], a.result__a')
+        results = [{
+            "url": link.get_attribute("href"),
+            "title": link.text_content().strip()
+        } for link in links if link.get_attribute("href")]
 
-        # Scroll and collect
-        page.mouse.wheel(0, 500)
-        time.sleep(1)
-        
-        links = page.eval_on_selector_all(
-            'a[data-testid="result-title-a"], a.result__a, a.web-result__a',
-            """els => els.map(e => ({
-                url: e.href,
-                title: e.innerText
-            }))"""
-        )
-        
-        return {"urls": [link["url"] for link in links[:10]]}
-        
+        return {"urls": [result["url"] for result in results[:10]]}
+
     except HTTPException as he:
         raise
     except Exception as e:
-        logger.error(f"Search error: {str(e)}")
-        try:
-            if page:
-                page.screenshot(path="/app/error.png")
-        except Exception as se:
-            logger.error(f"Screenshot failed: {str(se)}")
-        raise HTTPException(500, detail=f"Search failed: {str(e)}")
-    finally:
-        # Proper cleanup order
+        logger.error(f"Search failed: {str(e)}")
         if page:
-            safe_close(page)
-        if context:
-            safe_close(context)
-        if browser:
-            safe_close(browser)
-        if playwright:
-            playwright.stop()
+            page.screenshot(path="/app/error.png")
+        raise HTTPException(500, detail="Search service unavailable")
+    finally:
+        # Reverse resource cleanup
+        for resource in [page, context, browser, playwright]:
+            try:
+                if resource:
+                    resource.close()
+            except Exception as e:
+                logger.warning(f"Cleanup warning: {str(e)}")
 
 @app.get("/extract")
 def extract(url: str = Query(...)):

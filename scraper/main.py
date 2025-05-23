@@ -17,22 +17,18 @@ def serp(q: str = Query(..., min_length=2)):
     page = None
     try:
         with sync_playwright() as p:
-            # Launch browser with anti-detection settings
             browser = p.chromium.launch(
                 headless=True,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--single-process"
+                    "--disable-dev-shm-usage"
                 ]
             )
             
             context = browser.new_context(
                 user_agent=USER_AGENT,
-                viewport={"width": 1920, "height": 1080},
-                java_script_enabled=True,
-                bypass_csp=True
+                viewport={"width": 1920, "height": 1080}
             )
             
             page = context.new_page()
@@ -44,32 +40,21 @@ def serp(q: str = Query(..., min_length=2)):
                 timeout=60000
             )
 
-            # Wait for any type of result or blocking page
-            selector = (
-                '[data-testid="result"], '
-                '[data-testid="news-link"], '
-                '.result, '
-                '#captcha, '
-                'text="DDoS"'
-            )
+            # Wait for main container
             page.wait_for_selector(
-                selector,
+                '[data-testid="results"], #links, .results, #captcha',
                 state="attached",
                 timeout=45000
             )
             
             # Check for blocking pages
-            if page.query_selector('#captcha, :text("DDoS")'):
-                raise HTTPException(
-                    status_code=429,
-                    detail="Search blocked by provider"
-                )
-            
-            # Scroll to trigger lazy loading
+            if page.query_selector(':text("DDoS"), :text("CAPTCHA")'):
+                raise HTTPException(429, "Search blocked by provider")
+
+            # Scroll and collect results
             page.mouse.wheel(0, 2000)
             time.sleep(2)
             
-            # Collect all result links
             links = page.eval_on_selector_all(
                 '[data-testid="result-title-a"], a.result__a',
                 """els => els.map(e => ({
@@ -78,24 +63,26 @@ def serp(q: str = Query(..., min_length=2)):
                 }))"""
             )
             
-            logger.info(f"Found {len(links)} results")
             return {"urls": [link["url"] for link in links[:10]]}
             
     except HTTPException as he:
         raise
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
-        page.screenshot(path="/app/error.png")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Search failed: {str(e)}"
-        )
-    finally:
         try:
-            if page: page.close()
-            if context: context.close()
-            if browser: browser.close()
-        except: pass
+            if page and not page.is_closed():
+                page.screenshot(path="/app/error.png")
+        except Exception as se:
+            logger.error(f"Screenshot failed: {se}")
+        raise HTTPException(500, detail=f"Search failed: {str(e)}")
+    finally:
+        cleanup_order = [page, context, browser]
+        for resource in cleanup_order:
+            try:
+                if resource and not resource.is_closed():
+                    resource.close()
+            except Exception as ce:
+                logger.warning(f"Cleanup error: {ce}")
 
 @app.get("/extract")
 def extract(url: str = Query(...)):
